@@ -5,3 +5,5 @@ authors = ["Sebastian Holzapfel <seb.holzapfel@data61.csiro.au>"]
 
 [dependencies]
 rand = "*"
+raster = "*"
+byteorder = "*"

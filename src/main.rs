@@ -1,4 +1,12 @@
 extern crate rand;
+extern crate raster;
+extern crate byteorder;
+
+use byteorder::*;
+
+use std::fs::File;
+use std::env;
+use std::process;
 
 use std::collections::VecDeque;
 use std::f64::consts::PI;
@@ -120,19 +128,48 @@ fn white_noise(n_samples: usize, amplitude: f64) -> Vec<f64> {
     v
 }
 
+const Fs: f64 = 20e6;
+const nyquist: f64 = Fs/2.0;
+const n_lines: i32 = 625;
+const n_columns: i32 = 700;
+const line_freq_hz: f64 = 15.625e3;
+const frame_freq_hz: f64 = 50.0;
+const CHUNK_SIZE: usize = 1024*32;
+
+use raster::Image;
+use raster::Color;
+
 struct CompositeProcessor {
     blocks: VecDeque<Vec<f64>>,
-    sample_index: usize
+    sample_base: usize,
+    hsync_sawtooth: f64,
+    vsync_sawtooth: f64,
+    sync_threshold: f64,
+    white_level: f64,
+    black_level: f64,
+    canvas: Image
 }
 
 impl CompositeProcessor {
 
     pub fn new() -> CompositeProcessor {
         let blocks = VecDeque::new();
-        let sample_index = 0;
+        let sample_base = 0;
+        let hsync_sawtooth = 0.0;
+        let vsync_sawtooth = 0.0;
+        let sync_threshold = 0.05;
+        let white_level = 1.0;
+        let black_level = 0.2;
+        let canvas = Image::blank(n_columns, n_lines);
         CompositeProcessor {
             blocks,
-            sample_index
+            sample_base,
+            hsync_sawtooth,
+            vsync_sawtooth,
+            sync_threshold,
+            white_level,
+            black_level,
+            canvas
         }
     }
 
@@ -140,34 +177,73 @@ impl CompositeProcessor {
         self.blocks.push_back(block.to_vec());
         if self.blocks.len() > 3 {
             self.blocks.pop_front();
-            self.sample_index += block.len();
+            self.sample_base += block.len();
             self.process();
             /* TODO: return video frame if produced? */
         }
     }
 
     fn process(&mut self) {
-        println!("Processing blocks starting at: {}", self.sample_index);
+        println!("Processing blocks starting at: {}", self.sample_base);
+
+        let block_size = self.blocks[0].len();
         let mut whole_block: Vec<f64> = self.blocks[0].clone();
         for block in self.blocks.iter().skip(1) {
             whole_block.extend(block)
         }
-        let f = fir_design(FilterType::LowPass(0.1), WindowType::Hamming, 51);
-        let filtered = filter(&whole_block, &f);
+
+        let intensity_filter =
+            fir_design(FilterType::LowPass(2e6/nyquist), WindowType::Hamming, 101);
+        let intensity_filtered =
+            filter(&whole_block, &intensity_filter);
+
+        for i in block_size..(block_size*2) {
+            let s = whole_block[i];
+            self.hsync_sawtooth += (n_columns as f64) * line_freq_hz/Fs;
+            self.vsync_sawtooth += (n_lines as f64) * frame_freq_hz/Fs;
+            if s < self.sync_threshold {
+                self.hsync_sawtooth = 0.0;
+            }
+            if self.hsync_sawtooth < n_columns as f64 &&
+               self.vsync_sawtooth < n_lines as f64 {
+                let v: u8 =
+                    if s < self.black_level { 0 }
+                    else if s > self.white_level { 1 }
+                    else {
+                        (255.0 * ((s - self.black_level) / self.white_level)) as u8
+                    };
+                self.canvas.set_pixel(self.hsync_sawtooth as i32,
+                                      self.vsync_sawtooth as i32,
+                                      Color::rgba(v, v, v, 255)).unwrap();
+            }
+        }
+    }
+
+    fn save(&mut self) {
+        raster::save(&self.canvas, "test_render.png");
     }
 }
 
 fn main() {
-    let f = fir_design(FilterType::LowPass(0.1), WindowType::Hamming, 51);
-    //println!("{:?}", dft(&f, 256));
-    let mut proc = CompositeProcessor::new();
-    for n in 0..10 {
-        let noise = white_noise(64, 1.0);
-        proc.process_block(&noise);
+
+    let args: Vec<String> = env::args().collect();
+
+    if args.len() < 2 {
+        eprintln!("Usage: composite_decode file_name");
+        process::exit(1);
     }
-    /*
-    println!("{:?}", noise);
-    println!("{:?}", filter(&noise, &f));
-    */
-    //println!("octave --eval \"freqz({:?}, 1)\" --persist", f);
+
+    let mut file = File::open(args[1].clone()).unwrap();
+
+    let mut proc = CompositeProcessor::new();
+
+    let mut buffer: Vec<f64> = vec![];
+    while let Ok(value) = file.read_f32::<LittleEndian>() {
+        buffer.push(value as f64);
+        if buffer.len() == CHUNK_SIZE {
+            proc.process_block(&buffer);
+            buffer.clear()
+        }
+    }
+    proc.save();
 }
