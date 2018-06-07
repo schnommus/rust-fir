@@ -100,6 +100,13 @@ fn convolve(signal: &[f64], kernel: &[f64]) -> Vec<f64> {
     y
 }
 
+// Applies convolution, but corrects for time delay and culls to signal length
+fn filter(signal: &[f64], kernel: &[f64]) -> Vec<f64> {
+    let mut ret = convolve(signal, kernel).split_off(kernel.len()/2);
+    ret.resize(signal.len(), 0.0);
+    ret
+}
+
 // White noise, DC offset 0, amplitude measured from 0 -> extent
 fn white_noise(n_samples: usize, amplitude: f64) -> Vec<f64> {
     use rand::Rng;
@@ -113,9 +120,10 @@ fn white_noise(n_samples: usize, amplitude: f64) -> Vec<f64> {
 }
 
 fn main() {
-    let f = fir_design(FilterType::BandStop(0.2, 0.8), WindowType::Hamming, 51);
+    let f = fir_design(FilterType::LowPass(0.1), WindowType::Hamming, 51);
     //println!("{:?}", dft(&f, 256));
-    white_noise(100, 1.0);
-    println!("{:?}", dft(&convolve(&white_noise(1000, 1.0), &f), 256));
+    let noise = white_noise(100, 1.0);
+    println!("{:?}", noise);
+    println!("{:?}", filter(&noise, &f));
     //println!("octave --eval \"freqz({:?}, 1)\" --persist", f);
 }
