@@ -1,3 +1,5 @@
+extern crate rand;
+
 use std::f64::consts::PI;
 
 enum WindowType {
@@ -64,7 +66,7 @@ fn fir_design(filter_type: FilterType, window_type: WindowType, filter_len: u32)
 }
 
 // Simple, O(n^2), real -> abs mag dft
-fn dft(x: Vec<f64>, n_samples: usize) -> Vec<f64> {
+fn dft(x: &[f64], n_samples: usize) -> Vec<f64> {
 
     let mut y_re = vec![0.0; n_samples];
     let mut y_im = vec![0.0; n_samples];
@@ -84,8 +86,36 @@ fn dft(x: Vec<f64>, n_samples: usize) -> Vec<f64> {
         .collect()
 }
 
+// Simple O(n^2) convolution
+fn convolve(signal: &[f64], kernel: &[f64]) -> Vec<f64> {
+    let result_len = signal.len() + kernel.len() - 1;
+    let mut y = vec![0.0; result_len];
+    for n in 0..result_len {
+        let kmin = if n >= kernel.len() - 1 {n - (kernel.len() - 1)} else {0};
+        let kmax = if n < signal.len() - 1 {n} else {signal.len() - 1};
+        for k in kmin..kmax {
+            y[n] += signal[k] * kernel[n - k];
+        }
+    }
+    y
+}
+
+// White noise, DC offset 0, amplitude measured from 0 -> extent
+fn white_noise(n_samples: usize, amplitude: f64) -> Vec<f64> {
+    use rand::Rng;
+    let mut v = vec![0.0; n_samples];
+    let mut rng = rand::thread_rng();
+    for x in v.iter_mut() {
+        *x = rng.gen();
+        *x = 2.0 * (*x - 0.5) * amplitude;
+    }
+    v
+}
+
 fn main() {
-    let f = fir_design(FilterType::BandPass(0.2, 0.8), WindowType::BlackmanHarris, 21);
-    println!("{:?}", dft(f, 256));
+    let f = fir_design(FilterType::BandStop(0.2, 0.8), WindowType::Hamming, 51);
+    //println!("{:?}", dft(&f, 256));
+    white_noise(100, 1.0);
+    println!("{:?}", dft(&convolve(&white_noise(1000, 1.0), &f), 256));
     //println!("octave --eval \"freqz({:?}, 1)\" --persist", f);
 }
