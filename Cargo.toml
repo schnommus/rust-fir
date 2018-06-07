@@ -1,0 +1,6 @@
+[package]
+name = "fir"
+version = "0.1.0"
+authors = ["Sebastian Holzapfel <seb.holzapfel@data61.csiro.au>"]
+
+[dependencies]
