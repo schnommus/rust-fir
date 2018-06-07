@@ -1,5 +1,6 @@
 extern crate rand;
 
+use std::collections::VecDeque;
 use std::f64::consts::PI;
 
 enum WindowType {
@@ -119,11 +120,54 @@ fn white_noise(n_samples: usize, amplitude: f64) -> Vec<f64> {
     v
 }
 
+struct CompositeProcessor {
+    blocks: VecDeque<Vec<f64>>,
+    sample_index: usize
+}
+
+impl CompositeProcessor {
+
+    pub fn new() -> CompositeProcessor {
+        let blocks = VecDeque::new();
+        let sample_index = 0;
+        CompositeProcessor {
+            blocks,
+            sample_index
+        }
+    }
+
+    pub fn process_block(&mut self, block: &[f64]) {
+        self.blocks.push_back(block.to_vec());
+        if self.blocks.len() > 3 {
+            self.blocks.pop_front();
+            self.sample_index += block.len();
+            self.process();
+            /* TODO: return video frame if produced? */
+        }
+    }
+
+    fn process(&mut self) {
+        println!("Processing blocks starting at: {}", self.sample_index);
+        let mut whole_block: Vec<f64> = self.blocks[0].clone();
+        for block in self.blocks.iter().skip(1) {
+            whole_block.extend(block)
+        }
+        let f = fir_design(FilterType::LowPass(0.1), WindowType::Hamming, 51);
+        let filtered = filter(&whole_block, &f);
+    }
+}
+
 fn main() {
     let f = fir_design(FilterType::LowPass(0.1), WindowType::Hamming, 51);
     //println!("{:?}", dft(&f, 256));
-    let noise = white_noise(100, 1.0);
+    let mut proc = CompositeProcessor::new();
+    for n in 0..10 {
+        let noise = white_noise(64, 1.0);
+        proc.process_block(&noise);
+    }
+    /*
     println!("{:?}", noise);
     println!("{:?}", filter(&noise, &f));
+    */
     //println!("octave --eval \"freqz({:?}, 1)\" --persist", f);
 }
